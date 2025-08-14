@@ -9,6 +9,7 @@ import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.requests.GatewayIntent;   // <— INTENTS!
 import org.springframework.stereotype.Service;
 import java.awt.*;
 import java.time.Duration;
@@ -19,57 +20,54 @@ import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
 @Service
 public class BotService extends ListenerAdapter {
-    private static final String PREFIX = "!";
+    private static final String PREFIX = "!sb";
     private static final Pattern DICE = Pattern.compile("(?:(\\d+))?d(\\d+)", Pattern.CASE_INSENSITIVE);
     private volatile JDA jda;
     private Instant startTime = Instant.now();
-    // Opcional: restringir respostas a um canal específico do servidor
-    // Defina ALLOWED_CHANNEL_ID como variável de ambiente (ID do canal).
+    // Opcional: restringir respostas a um canal específico (defina env ALLOWED_CHANNEL_ID com o ID)
     private final String allowedChannelId = System.getenv("ALLOWED_CHANNEL_ID");
-
     @PostConstruct
     public void startBot() throws Exception {
         String token = System.getenv("DISCORD_TOKEN");
         if (token == null || token.isBlank()) {
             throw new IllegalStateException("Defina a variável de ambiente DISCORD_TOKEN com o token do bot.");
         }
-        this.jda = JDABuilder.createDefault(token)
+        // IMPORTANTE: habilitar intents (e ative MESSAGE CONTENT no Developer Portal)
+        this.jda = JDABuilder.createDefault(
+                        token,
+                        GatewayIntent.GUILD_MESSAGES,
+                        GatewayIntent.DIRECT_MESSAGES,
+                        GatewayIntent.MESSAGE_CONTENT
+                )
                 .addEventListeners(this)
                 .build();
         jda.awaitReady();
         startTime = Instant.now();
-        System.out.println(" SpikeBot online! User: " + jda.getSelfUser().getAsTag());
+        System.out.println(":marca_de_verificação_branca: SpikeBot online! User: " + jda.getSelfUser().getAsTag());
     }
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
-        // Ignora bots
         if (event.getAuthor().isBot()) return;
-        // Se configurado, restringe a um canal específico (apenas para mensagens em servidor)
+        // Limita a um canal específico (se ALLOWED_CHANNEL_ID estiver definido)
         if (allowedChannelId != null && event.isFromGuild()) {
-            if (!event.getChannel().getId().equals(allowedChannelId)) {
-                return; // não responde fora do canal permitido
-            }
+            if (!event.getChannel().getId().equals(allowedChannelId)) return;
         }
         String raw = event.getMessage().getContentRaw();
-        if (!raw.startsWith(PREFIX)) {
-
-            return;
-        }
+        if (!raw.startsWith(PREFIX)) return;
         String[] parts = raw.substring(PREFIX.length()).trim().split("\\s+", 2);
-        String cmd = parts[0].toLowerCase(Locale.ROOT);
+        String cmd  = parts[0].toLowerCase(Locale.ROOT);
         String args = parts.length > 1 ? parts[1] : "";
         switch (cmd) {
-            case "ping" -> handlePing(event);
-            case "help" -> handleHelp(event);
-            case "echo" -> handleEcho(event, args);
-            case "roll" -> handleRoll(event, args);
+            case "ping"   -> handlePing(event);
+            case "help"   -> handleHelp(event);
+            case "echo"   -> handleEcho(event, args);
+            case "roll"   -> handleRoll(event, args);
             case "choose" -> handleChoose(event, args);
             case "avatar" -> handleAvatar(event, args);
             case "server" -> handleServer(event);
-            default -> event.getChannel().sendMessage("Comando desconhecido. Use `!help`.").queue();
+            default -> event.getChannel().sendMessage(":interrogação: Comando desconhecido. Use `!sb help`.").queue();
         }
     }
     /* ========================= Comandos ========================= */
@@ -77,10 +75,10 @@ public class BotService extends ListenerAdapter {
         Instant start = Instant.now();
         event.getChannel().sendMessage(" Pong…").queue(msg -> {
             long api = jda.getGatewayPing();
-            long roundTrip = Duration.between(start, Instant.now()).toMillis();
+            long rt  = Duration.between(start, Instant.now()).toMillis();
             Duration up = Duration.between(startTime, Instant.now());
-            msg.editMessage(String.format("Pong!",
-                    api, roundTrip, formatDuration(up))).queue();
+            msg.editMessage(String.format(" Pong! API: %d ms | RT: %d ms | Uptime: %s",
+                    api, rt, formatDuration(up))).queue();
         });
     }
     private void handleHelp(MessageReceivedEvent event) {
@@ -88,23 +86,21 @@ public class BotService extends ListenerAdapter {
         eb.setTitle("Comandos do SpikeBot");
         eb.setColor(new Color(0x00B2FF));
         eb.setDescription("""
-                **Prefixo:** `!`
-                • `!ping` — mostra latência e uptime
-                • `!help` — esta ajuda
-                • `!echo <texto>` — repete a mensagem
-                • `!roll [NdM]` — rola dados (ex: `!roll`, `!roll d20`, `!roll 3d6`)
-                • `!choose a | b | c` — escolhe aleatoriamente
-                • `!avatar [@user]` — mostra avatar seu ou de alguém marcado
-                • `!server` — informações básicas do servidor
+                **Prefixo:** `!sb`
+                • `!sb ping` — mostra latência e uptime
+                • `!sb help` — esta ajuda
+                • `!sb echo <texto>` — repete a mensagem
+                • `!sb roll [NdM]` — rola dados (ex: `!sb roll`, `!sb roll d20`, `!sb roll 3d6`)
+                • `!sb choose a | b | c` — escolhe aleatoriamente
+                • `!sb avatar [@user]` — mostra avatar seu ou de alguém marcado
+                • `!sb server` — informações básicas do servidor
                 """);
-        if (allowedChannelId != null) {
-            eb.setFooter("Restringido ao canal ID " + allowedChannelId);
-        }
+        if (allowedChannelId != null) eb.setFooter("Restringido ao canal ID " + allowedChannelId);
         event.getChannel().sendMessageEmbeds(eb.build()).queue();
     }
     private void handleEcho(MessageReceivedEvent event, String args) {
         if (args.isBlank()) {
-            event.getChannel().sendMessage("Uso: `!echo <texto>`").queue();
+            event.getChannel().sendMessage("Uso: `!sb echo <texto>`").queue();
             return;
         }
         event.getChannel().sendMessage(args).queue();
@@ -117,7 +113,7 @@ public class BotService extends ListenerAdapter {
                 if (m.group(1) != null) n = clamp(parseInt(m.group(1), 1), 1, 100);
                 faces = clamp(parseInt(m.group(2), 6), 2, 1000);
             } else {
-                event.getChannel().sendMessage("Uso: `!roll` | `!roll d20` | `!roll 3d6`").queue();
+                event.getChannel().sendMessage("Uso: `!sb roll`, `!sb roll d20`, `!sb roll 3d6`").queue();
                 return;
             }
         }
@@ -136,7 +132,7 @@ public class BotService extends ListenerAdapter {
     }
     private void handleChoose(MessageReceivedEvent event, String args) {
         if (args.isBlank()) {
-            event.getChannel().sendMessage("Uso: `!choose opção1 | opção2 | opção3`").queue();
+            event.getChannel().sendMessage("Uso: `!sb choose opção1 | opção2 | opção3`").queue();
             return;
         }
         String[] options = List.of(args.split("\\|")).stream()
